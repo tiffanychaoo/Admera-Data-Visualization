@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import dash_bootstrap_components as dbc
 from dash import Dash, dcc, html, Input, Output, State, callback, no_update
 from functools import reduce     
 
@@ -104,7 +105,7 @@ def combine_dataframes(list_of_dataframes):
         reheaded_df = rehead(dataframe)
         dataframes.append(reheaded_df)
 
-    # combining the dataframes (unsure if this works with more than two dataframes) 
+    # combining the dataframes (unsure if this works with more than two dataframes) #TODO
     merged_df = reduce(lambda left,right: pd.merge(left,right, how='inner'), dataframes)
     return merged_df
 
@@ -304,13 +305,24 @@ def create_pies(dataframe, keys, sort_by):
 
 
 # APP LAYOUT
-external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
+external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css', dbc.themes.BOOTSTRAP]
 
 app = Dash(__name__, title='Data Visualization', external_stylesheets=external_stylesheets)
 server = app.server
 
+# Globals for upload progress bar
+value_progress = 0
+total_progress = 6
+
 app.layout = html.Div([
     html.Hr(),
+    #PROGRESS BAR
+    html.Div(
+    [
+        dcc.Interval(id="progress-interval", n_intervals=0, interval=1000),
+        dbc.Progress(id="progress"),
+    ]
+    ),
     html.Div([
         # INTRODUCTION & INSTRUCTIONS
         dcc.Markdown('''
@@ -434,6 +446,7 @@ app.layout = html.Div([
 
 
 def parse_contents(contents, filename):
+    global value_progress
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
     
@@ -444,7 +457,7 @@ def parse_contents(contents, filename):
                 io.StringIO(decoded.decode('utf-8')), header=0)
         elif 'xls' in filename:
             # Assume that the user uploaded an excel file
-            df = pd.read_excel(io.BytesIO(decoded))
+            df = pd.read_excel(io.BytesIO(decoded)) #LONG
         elif 'txt' in filename:
             df = pd.read_csv(io.StringIO(decoded.decode('utf-8')), sep='\t\s*', header=0, engine='python')
     except Exception as e: ## TODO not sure that this works 
@@ -452,7 +465,7 @@ def parse_contents(contents, filename):
         return html.Div([
             'There was an error processing this file.'
         ])
-
+    value_progress = 2
     return filename, df
 
 
@@ -463,11 +476,11 @@ def parse_contents(contents, filename):
     Output('upload-data-store', 'data'),
     Input('upload-data', 'contents'),
     State('upload-data', 'filename'))
-
 def update_output(list_of_contents, list_of_names):
+    global value_progress
     if list_of_contents is not None:
+        value_progress = 1
         list_of_dataframes = [parse_contents(c, n) for c, n in zip(list_of_contents, list_of_names)]
-        
         if len(list_of_dataframes) > 1:
             dataframes = []
             for pair in list_of_dataframes:
@@ -475,7 +488,6 @@ def update_output(list_of_contents, list_of_names):
             unjsonified_df = combine_dataframes(dataframes)
         else:
             unjsonified_df = rehead(list_of_dataframes[0][1])
-        
         return unjsonified_df.to_json(orient="split", index=False, path_or_buf=None)
 
 
@@ -555,14 +567,15 @@ def create_dropdown_L(jsonified_df):
     Output('dropdown-menu-R', 'children'),
     Input('upload-data-store', 'data'))
 
-def create_dropdown_R(jsonified_df):
+def create_dropdown_R(jsonified_df): 
+    global value_progress
     df = pd.read_json(jsonified_df, orient='split')
     columns = []
     
     for column_name in df.columns:
         if column_name not in ['UMAP_1', 'UMAP_2', 'tSNE_1', 'tSNE_2', 'orig.ident', 'cell_barcode', 'cell_type', 'sample']:
             columns.append(column_name)
-    
+    value_progress = 3
     return dcc.Dropdown(
             options=[{'label' : column, 'value' : column} for column in columns],
             value=columns[0],
@@ -585,14 +598,19 @@ def create_dropdown_R(jsonified_df):
     prevent_initial_call=True)
 
 def update_sample_type(jsonified_df, sample_keys, dependent_var, scatter_type, color_sort):
+    global value_progress
     df = pd.read_json(jsonified_df, orient='split')
 
     if len(sample_keys) == len(df['sample'].unique()):
         scatter = create_scatter(df, ['all'], scatter_type, color_sort)
-        boxplot = create_boxplot(df, ['all'], dependent_var, df, color_sort)
+        value_progress = 5
+        boxplot = create_boxplot(df, ['all'], dependent_var, df, color_sort) 
+        value_progress = 6
     else:
         scatter = create_scatter(df, sample_keys, scatter_type, color_sort)
+        value_progress = 5
         boxplot = create_boxplot(df, sample_keys, dependent_var, df, color_sort)
+        value_progress = 6
 
     return scatter, boxplot
 
@@ -661,13 +679,27 @@ def display_click_data(clickData, jsonified_df, dependent_var, color_sort):
     Input('sort-option', 'value'))
 
 def display_percentage_charts(jsonified_df, color_sort):
+    global value_progress
     df = pd.read_json(jsonified_df, orient='split')
     samples = [key for key in group_samples(df).keys()]
+    value_progress = 4
     return create_pies(df, samples, color_sort), create_bar(df, color_sort)
 
 
-# In[ ]:
-
+# In[25]:
+# Update progress 
+@app.callback(
+    [Output("progress", "value"), Output("progress", "label")],
+    [Input("progress-interval", "n_intervals")],
+)
+def update_progress(n):
+    global value_progress
+    global total_progress
+    # check progress of some background process, in this example we'll just
+    # use n_intervals constrained to be in 0-100
+    progress = int(value_progress/total_progress * 100 )
+    # only add text after 5% progress to ensure text isn't squashed too much
+    return progress, f"{progress} %" if progress >= 5 else ""
 
 if __name__=='__main__':
     app.run(port=8050)
