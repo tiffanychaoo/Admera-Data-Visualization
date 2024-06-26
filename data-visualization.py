@@ -316,9 +316,8 @@ total_progress = 6
 
 app.layout = html.Div([
     html.Hr(),
-    #PROGRESS BAR
     html.Div(
-    [
+    [   #PROGRESS BAR
         dcc.Interval(id="progress-interval", n_intervals=0, interval=1000),
         dbc.Progress(id="progress"),
     ]
@@ -337,11 +336,14 @@ app.layout = html.Div([
         '''),
     
         # FILE UPLOAD AREA
+        html.Label(
+            children = ["No file selected"],
+            id = "upload-name"
+            ),
         dcc.Upload(
             id='upload-data',
-            children=html.Div([
-                'Drag and Drop or ',
-                html.A('Select Files')
+            children=html.Div(children=[
+                'Drag and Drop or Select Files'
             ]),
             style={
                 'width': '95%',
@@ -460,6 +462,8 @@ def parse_contents(contents, filename):
             df = pd.read_excel(io.BytesIO(decoded)) #LONG
         elif 'txt' in filename:
             df = pd.read_csv(io.StringIO(decoded.decode('utf-8')), sep='\t\s*', header=0, engine='python')
+        else: 
+            return "Incompatible file type"
     except Exception as e: ## TODO not sure that this works 
         print(e)
         return html.Div([
@@ -473,14 +477,20 @@ def parse_contents(contents, filename):
 
 
 @app.callback(
+    Output('upload-name', 'children'),
     Output('upload-data-store', 'data'),
     Input('upload-data', 'contents'),
-    State('upload-data', 'filename'))
+    State('upload-data', 'filename'),
+    prevent_initial_call = True)
 def update_output(list_of_contents, list_of_names):
     global value_progress
-    if list_of_contents is not None:
+    if list_of_contents is not None:  
         value_progress = 1
         list_of_dataframes = [parse_contents(c, n) for c, n in zip(list_of_contents, list_of_names)]
+        if "Incompatible file type" in list_of_dataframes:
+            value_progress = 0
+            return "Incompatible file type", None
+        
         if len(list_of_dataframes) > 1:
             dataframes = []
             for pair in list_of_dataframes:
@@ -488,7 +498,9 @@ def update_output(list_of_contents, list_of_names):
             unjsonified_df = combine_dataframes(dataframes)
         else:
             unjsonified_df = rehead(list_of_dataframes[0][1])
-        return unjsonified_df.to_json(orient="split", index=False, path_or_buf=None)
+        return "Selected files: " + "".join("".join(str(list_of_names).split("[")).split("]")), unjsonified_df.to_json(orient="split", index=False, path_or_buf=None)
+    else:
+        return "No file processed", None
 
 
 # In[17]:
