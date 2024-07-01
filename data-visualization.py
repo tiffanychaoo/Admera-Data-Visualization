@@ -318,7 +318,7 @@ else:
     background_callback_manager = DiskcacheManager(cache)
 
 # APP LAYOUT
-external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css', dbc.themes.BOOTSTRAP]
+external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 
 app = Dash(__name__, title='Data Visualization', external_stylesheets=external_stylesheets, background_callback_manager=background_callback_manager)
 server = app.server
@@ -330,7 +330,7 @@ app.layout = html.Div([
             [
                 html.Progress(id="progress_bar", value="0",
                               style = {'width' : '95%'}),
-                html.Label(children = ["%"], id = 'progress_percent'),
+                html.Label(children = ["%"], style = {'float' : 'right'}, id = 'progress_percent'),
                 dcc.Store(id='done_storage', storage_type='session'),
             ]
         ),
