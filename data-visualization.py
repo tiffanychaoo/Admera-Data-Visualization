@@ -10,8 +10,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import time
+import os
 import dash_bootstrap_components as dbc
-from dash import Dash, dcc, html, Input, Output, State, callback, no_update
+from dash import Dash, dcc, html, Input, Output, DiskcacheManager, CeleryManager, State, callback, no_update
 from functools import reduce     
 
 import base64
@@ -303,25 +305,32 @@ def create_pies(dataframe, keys, sort_by):
 
 # In[14]:
 
+if 'REDIS_URL' in os.environ:
+    # Use Redis & Celery if REDIS_URL set as an env variable
+    from celery import Celery
+    celery_app = Celery(__name__, broker=os.environ['REDIS_URL'], backend=os.environ['REDIS_URL'])
+    background_callback_manager = CeleryManager(celery_app)
+
+else:
+    # Diskcache for non-production apps when developing locally
+    import diskcache
+    cache = diskcache.Cache("./cache")
+    background_callback_manager = DiskcacheManager(cache)
 
 # APP LAYOUT
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css', dbc.themes.BOOTSTRAP]
 
-app = Dash(__name__, title='Data Visualization', external_stylesheets=external_stylesheets)
+app = Dash(__name__, title='Data Visualization', external_stylesheets=external_stylesheets, background_callback_manager=background_callback_manager)
 server = app.server
-
-# Globals for upload progress bar
-value_progress = 0
-total_progress = 6
 
 app.layout = html.Div([
     html.Hr(),
+    # PROGRESS BAR
     html.Div(
-    [   #PROGRESS BAR
-        dcc.Interval(id="progress-interval", n_intervals=0, interval=1000),
-        dbc.Progress(id="progress"),
-    ]
-    ),
+            [
+                html.Progress(id="progress_bar", value="0"),
+            ]
+        ),
     html.Div([
         # INTRODUCTION & INSTRUCTIONS
         dcc.Markdown('''
@@ -337,7 +346,7 @@ app.layout = html.Div([
     
         # FILE UPLOAD AREA
         html.Label(
-            children = ["No file selected"],
+            children = ["Select a file: "],
             id = "upload-name"
             ),
         dcc.Upload(
@@ -448,7 +457,6 @@ app.layout = html.Div([
 
 
 def parse_contents(contents, filename):
-    global value_progress
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
     
@@ -469,7 +477,6 @@ def parse_contents(contents, filename):
         return html.Div([
             'There was an error processing this file.'
         ])
-    value_progress = 2
     return filename, df
 
 
@@ -481,14 +488,21 @@ def parse_contents(contents, filename):
     Output('upload-data-store', 'data'),
     Input('upload-data', 'contents'),
     State('upload-data', 'filename'),
+    running = [
+        (Output("upload-data","disabled"), True, False),
+        (Output("upload-name", "hidden"), True, False),
+    ],
+    background=True,
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")],
     prevent_initial_call = True)
-def update_output(list_of_contents, list_of_names):
-    global value_progress
+def update_output(set_progress, list_of_contents, list_of_names):
     if list_of_contents is not None:  
-        value_progress = 1
+        set_progress((str(1), str(6)))
         list_of_dataframes = [parse_contents(c, n) for c, n in zip(list_of_contents, list_of_names)]
+        print("made it")
+        set_progress((str(2), str(6)))
         if "Incompatible file type" in list_of_dataframes:
-            value_progress = 0
+            set_progress((str(0), str(6)))
             return "Incompatible file type", None
         
         if len(list_of_dataframes) > 1:
@@ -500,7 +514,7 @@ def update_output(list_of_contents, list_of_names):
             unjsonified_df = rehead(list_of_dataframes[0][1])
         return "Selected files: " + "".join("".join(str(list_of_names).split("[")).split("]")), unjsonified_df.to_json(orient="split", index=False, path_or_buf=None)
     else:
-        return "No file processed", None
+        return "No file selected", None
 
 
 # In[17]:
@@ -577,17 +591,22 @@ def create_dropdown_L(jsonified_df):
 # CREATE RIGHT DROPDOWN MENU
 @app.callback(
     Output('dropdown-menu-R', 'children'),
-    Input('upload-data-store', 'data'))
+    Input('upload-data-store', 'data'),
+    running = [
+        (Output("upload-data","disabled"), True, False)
+    ],
+    background = True,
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")],
+    )
 
-def create_dropdown_R(jsonified_df): 
-    global value_progress
+def create_dropdown_R(set_progress, jsonified_df): 
     df = pd.read_json(jsonified_df, orient='split')
     columns = []
     
     for column_name in df.columns:
         if column_name not in ['UMAP_1', 'UMAP_2', 'tSNE_1', 'tSNE_2', 'orig.ident', 'cell_barcode', 'cell_type', 'sample']:
             columns.append(column_name)
-    value_progress = 3
+    set_progress((str(3), str(6)))
     return dcc.Dropdown(
             options=[{'label' : column, 'value' : column} for column in columns],
             value=columns[0],
@@ -607,22 +626,26 @@ def create_dropdown_R(jsonified_df):
     Input('boxplot-dependent-variable', 'value'), # boxplot dependent variable
     Input('scatter-map-type', 'value'), # scatter map type (UMAP or tSNE)
     Input('sort-option', 'value'), # color sort
-    prevent_initial_call=True)
+    prevent_initial_call=True,
+    running = [
+        (Output("upload-data","disabled"), True, False),
+    ],
+    background=True,
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")])
 
-def update_sample_type(jsonified_df, sample_keys, dependent_var, scatter_type, color_sort):
-    global value_progress
+def update_sample_type(set_progress, jsonified_df, sample_keys, dependent_var, scatter_type, color_sort):
     df = pd.read_json(jsonified_df, orient='split')
 
     if len(sample_keys) == len(df['sample'].unique()):
         scatter = create_scatter(df, ['all'], scatter_type, color_sort)
-        value_progress = 5
+        set_progress((str(5), str(6)))
         boxplot = create_boxplot(df, ['all'], dependent_var, df, color_sort) 
-        value_progress = 6
+        set_progress((str(6), str(6)))
     else:
         scatter = create_scatter(df, sample_keys, scatter_type, color_sort)
-        value_progress = 5
+        set_progress((str(5), str(6)))
         boxplot = create_boxplot(df, sample_keys, dependent_var, df, color_sort)
-        value_progress = 6
+        set_progress((str(6), str(6)))
 
     return scatter, boxplot
 
@@ -688,30 +711,23 @@ def display_click_data(clickData, jsonified_df, dependent_var, color_sort):
     Output('pie-chart', 'figure'),
     Output('bar-chart', 'figure'),
     Input('upload-data-store', 'data'),
-    Input('sort-option', 'value'))
+    Input('sort-option', 'value'),
+    running = [
+        (Output("upload-data","disabled"), True, False),
+    ],
+    background=True,
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")],
+    prevent_initial_call = True)
 
-def display_percentage_charts(jsonified_df, color_sort):
-    global value_progress
+
+def display_percentage_charts(set_progress, jsonified_df, color_sort):
     df = pd.read_json(jsonified_df, orient='split')
     samples = [key for key in group_samples(df).keys()]
-    value_progress = 4
+    set_progress((str(4), str(6)))
     return create_pies(df, samples, color_sort), create_bar(df, color_sort)
 
 
 # In[25]:
-# Update progress 
-@app.callback(
-    [Output("progress", "value"), Output("progress", "label")],
-    [Input("progress-interval", "n_intervals")],
-)
-def update_progress(n):
-    global value_progress
-    global total_progress
-    # check progress of some background process, in this example we'll just
-    # use n_intervals constrained to be in 0-100
-    progress = int(value_progress/total_progress * 100 )
-    # only add text after 5% progress to ensure text isn't squashed too much
-    return progress, f"{progress} %" if progress >= 5 else ""
 
 if __name__=='__main__':
     app.run(port=8050)
