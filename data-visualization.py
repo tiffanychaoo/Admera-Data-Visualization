@@ -328,7 +328,10 @@ app.layout = html.Div([
     # PROGRESS BAR
     html.Div(
             [
-                html.Progress(id="progress_bar", value="0"),
+                html.Progress(id="progress_bar", value="0",
+                              style = {'width' : '95%'}),
+                html.Label(children = ["%"], id = 'progress_percent'),
+                dcc.Store(id='done_storage', storage_type='session'),
             ]
         ),
     html.Div([
@@ -493,16 +496,15 @@ def parse_contents(contents, filename):
         (Output("upload-name", "hidden"), True, False),
     ],
     background=True,
-    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")],
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max"), Output("progress_percent", "children"), Output('done_storage', 'data')],
     prevent_initial_call = True)
 def update_output(set_progress, list_of_contents, list_of_names):
     if list_of_contents is not None:  
-        set_progress((str(1), str(6)))
+        set_progress((str(1), str(6), str(int(1/6*100))+'%', no_update))
         list_of_dataframes = [parse_contents(c, n) for c, n in zip(list_of_contents, list_of_names)]
-        print("made it")
-        set_progress((str(2), str(6)))
+        set_progress((str(2), str(6), str(int(2/6*100))+'%', no_update))
         if "Incompatible file type" in list_of_dataframes:
-            set_progress((str(0), str(6)))
+            set_progress((str(6), str(6), str(0)+'%', True))
             return "Incompatible file type", None
         
         if len(list_of_dataframes) > 1:
@@ -596,7 +598,7 @@ def create_dropdown_L(jsonified_df):
         (Output("upload-data","disabled"), True, False)
     ],
     background = True,
-    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")],
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max"), Output("progress_percent", "children")],
     )
 
 def create_dropdown_R(set_progress, jsonified_df): 
@@ -606,7 +608,7 @@ def create_dropdown_R(set_progress, jsonified_df):
     for column_name in df.columns:
         if column_name not in ['UMAP_1', 'UMAP_2', 'tSNE_1', 'tSNE_2', 'orig.ident', 'cell_barcode', 'cell_type', 'sample']:
             columns.append(column_name)
-    set_progress((str(3), str(6)))
+    set_progress((str(3), str(6), '50%'))
     return dcc.Dropdown(
             options=[{'label' : column, 'value' : column} for column in columns],
             value=columns[0],
@@ -621,6 +623,7 @@ def create_dropdown_R(set_progress, jsonified_df):
 @app.callback(
     Output('linked-scatterplot', 'figure', allow_duplicate=True),
     Output('linked-boxplot', 'figure', allow_duplicate=True),
+    Output('done_storage', 'data'),
     Input('upload-data-store', 'data'), # jsonified df
     Input('sample-type', 'value'), # sample types
     Input('boxplot-dependent-variable', 'value'), # boxplot dependent variable
@@ -631,23 +634,23 @@ def create_dropdown_R(set_progress, jsonified_df):
         (Output("upload-data","disabled"), True, False),
     ],
     background=True,
-    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")])
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max"), Output('progress_percent', 'children')])
 
 def update_sample_type(set_progress, jsonified_df, sample_keys, dependent_var, scatter_type, color_sort):
     df = pd.read_json(jsonified_df, orient='split')
 
     if len(sample_keys) == len(df['sample'].unique()):
         scatter = create_scatter(df, ['all'], scatter_type, color_sort)
-        set_progress((str(5), str(6)))
+        set_progress((str(5), str(6), str(int(5/6*100))+'%'))
         boxplot = create_boxplot(df, ['all'], dependent_var, df, color_sort) 
-        set_progress((str(6), str(6)))
+        set_progress((str(6), str(6), str(100)+'%'))
     else:
         scatter = create_scatter(df, sample_keys, scatter_type, color_sort)
-        set_progress((str(5), str(6)))
+        set_progress((str(5), str(6), str(int(5/6*100))+'%'))
         boxplot = create_boxplot(df, sample_keys, dependent_var, df, color_sort)
-        set_progress((str(6), str(6)))
+        set_progress((str(6), str(6), str(100)+'%'))
 
-    return scatter, boxplot
+    return scatter, boxplot, True
 
 
 # In[22]:
@@ -716,18 +719,30 @@ def display_click_data(clickData, jsonified_df, dependent_var, color_sort):
         (Output("upload-data","disabled"), True, False),
     ],
     background=True,
-    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")],
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max"), Output('progress_percent', 'children')],
     prevent_initial_call = True)
 
 
 def display_percentage_charts(set_progress, jsonified_df, color_sort):
     df = pd.read_json(jsonified_df, orient='split')
     samples = [key for key in group_samples(df).keys()]
-    set_progress((str(4), str(6)))
+    set_progress((str(4), str(6), str(int(4/6*100))+'%'))
     return create_pies(df, samples, color_sort), create_bar(df, color_sort)
 
 
 # In[25]:
+@callback(
+    Output('progress_percent', 'children'),
+    Input('done_storage', 'data'),
+    background=True,
+    progress=[Output("progress_bar", "value"), Output("progress_bar", "max")],
+    prevent_initial_call = True
+)
+def update_progress_percent(set_progress, done):
+    if done:
+        time.sleep(2)
+        set_progress((str(0), str(0)))
+    return ""
 
 if __name__=='__main__':
     app.run(port=8050)
